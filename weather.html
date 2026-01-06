@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClearSky Weather</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+        
+        /* Custom Scrollbar for horizontal forecast on mobile */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .weather-icon-anim {
+            transition: transform 0.3s ease;
+        }
+        .weather-card:hover .weather-icon-anim {
+            transform: scale(1.1);
+        }
+        
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* AQI Color Scales */
+        .aqi-good { background-color: #10b981; color: white; } /* Green */
+        .aqi-fair { background-color: #f59e0b; color: white; } /* Yellow/Orange */
+        .aqi-poor { background-color: #ef4444; color: white; } /* Red */
+
+        /* Favorite Chip */
+        .fav-chip {
+            transition: all 0.2s;
+        }
+        .fav-chip:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="text-gray-800 p-4 md:p-8 flex items-center justify-center">
+
+    <div id="app" class="w-full max-w-4xl mx-auto">
+        
+        <!-- Header / Search -->
+        <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+            <div class="flex items-center gap-2 self-start md:self-auto">
+                <i class="ph-fill ph-cloud-sun text-3xl text-blue-600"></i>
+                <h1 class="text-2xl font-bold text-gray-800">ClearSky</h1>
+            </div>
+
+            <div class="flex w-full md:w-auto gap-2">
+                <form onsubmit="handleSearch(event)" class="relative flex-1 md:min-w-[300px]">
+                    <input type="text" id="search-input" placeholder="Search city (e.g. Tokyo)" class="w-full px-4 py-2 pr-10 rounded-full border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-sm">
+                    <button type="submit" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-600">
+                        <i class="ph-bold ph-magnifying-glass text-lg"></i>
+                    </button>
+                </form>
+                <button onclick="getLocation()" class="bg-white p-2 rounded-full shadow-sm hover:shadow-md transition-all active:scale-95 text-blue-600" title="Locate Me">
+                    <i class="ph-bold ph-crosshair text-xl"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Favorites Section -->
+        <div id="favorites-section" class="mb-6 hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">Favorites</h4>
+            </div>
+            <div id="favorites-list" class="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                <!-- Chips injected via JS -->
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading" class="hidden flex flex-col items-center justify-center py-20">
+            <div class="loading-spinner mb-4"></div>
+            <p class="text-gray-500 animate-pulse">Fetching forecast...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="error-message" class="hidden bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm" role="alert">
+            <p class="font-bold">Error</p>
+            <p id="error-text">Something went wrong.</p>
+        </div>
+
+        <!-- Main Content -->
+        <div id="weather-content" class="space-y-6 opacity-0 transition-opacity duration-500">
+            
+            <!-- Current Weather Card -->
+            <div class="glass-panel rounded-3xl shadow-xl p-6 md:p-10 relative overflow-hidden group">
+                <!-- Background decorative icon -->
+                <div class="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                    <i id="bg-icon" class="ph-fill ph-sun text-9xl"></i>
+                </div>
+
+                <!-- Favorite Toggle Button -->
+                <button onclick="toggleFavorite()" id="star-btn" class="absolute top-6 right-6 z-20 p-2 rounded-full bg-white/40 hover:bg-white/60 transition-colors text-yellow-500 shadow-sm backdrop-blur-sm" title="Add to Favorites">
+                    <i id="star-icon" class="ph-bold ph-star text-2xl"></i>
+                </button>
+
+                <div class="relative z-10">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div>
+                            <div class="flex items-center gap-2 text-gray-500 font-medium mb-1">
+                                <i class="ph-fill ph-map-pin"></i>
+                                <span id="location-name">Detecting Location...</span>
+                            </div>
+                            <div class="text-gray-400 text-sm" id="current-date">--</div>
+                        </div>
+                        <div id="aqi-badge" class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider hidden">
+                            AQI: <span id="aqi-val">--</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 flex flex-col md:flex-row items-center md:items-end gap-6">
+                        <div class="flex items-center">
+                            <i id="current-icon" class="ph-fill ph-sun text-6xl md:text-8xl text-yellow-500 mr-4"></i>
+                            <div>
+                                <h2 class="text-6xl md:text-8xl font-bold text-gray-900 tracking-tighter" id="current-temp">--°</h2>
+                                <p class="text-xl text-gray-600 font-medium capitalize" id="current-desc">--</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Grid Stats -->
+                        <div class="flex-1 w-full md:w-auto grid grid-cols-3 gap-4 md:ml-auto bg-white/50 p-4 rounded-2xl">
+                            <div class="text-center">
+                                <i class="ph-fill ph-drop text-blue-500 text-xl mb-1"></i>
+                                <p class="text-xs text-gray-500 uppercase font-bold">Humidity</p>
+                                <p class="text-lg font-semibold" id="current-humidity">--%</p>
+                            </div>
+                            <div class="text-center border-l border-gray-200">
+                                <i class="ph-fill ph-wind text-gray-500 text-xl mb-1"></i>
+                                <p class="text-xs text-gray-500 uppercase font-bold">Wind</p>
+                                <p class="text-lg font-semibold"><span id="current-wind">--</span> <span class="text-xs">km/h</span></p>
+                            </div>
+                            <div class="text-center border-l border-gray-200">
+                                <i class="ph-fill ph-umbrella text-indigo-500 text-xl mb-1"></i>
+                                <p class="text-xs text-gray-500 uppercase font-bold">Rain</p>
+                                <p class="text-lg font-semibold"><span id="current-rain-prob">--</span>%</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 7 Day Forecast -->
+            <div>
+                <h3 class="text-xl font-bold text-gray-800 mb-4 px-2">7-Day Forecast</h3>
+                <!-- Horizontal scroll on mobile, grid on desktop -->
+                <div id="forecast-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3 pb-4">
+                    <!-- Cards will be injected here via JS -->
+                </div>
+            </div>
+            
+            <footer class="text-center text-gray-400 text-xs mt-8">
+                Data provided by Open-Meteo • No API Key Required
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        let currentLat = 40.7128;
+        let currentLon = -74.0060;
+        let userLocationName = "New York, USA";
+        
+        // Load favorites from local storage
+        let favorites = JSON.parse(localStorage.getItem('cs_favorites')) || [];
+
+        // WMO Weather Interpretation Codes
+        function getWeatherDetails(code) {
+            const map = {
+                0: { desc: "Clear sky", icon: "ph-sun", color: "text-yellow-500" },
+                1: { desc: "Mainly clear", icon: "ph-sun-dim", color: "text-yellow-400" },
+                2: { desc: "Partly cloudy", icon: "ph-cloud-sun", color: "text-gray-400" },
+                3: { desc: "Overcast", icon: "ph-cloud", color: "text-gray-500" },
+                45: { desc: "Fog", icon: "ph-cloud-fog", color: "text-slate-400" },
+                48: { desc: "Rime fog", icon: "ph-cloud-fog", color: "text-slate-400" },
+                51: { desc: "Light drizzle", icon: "ph-cloud-drizzle", color: "text-blue-300" },
+                53: { desc: "Moderate drizzle", icon: "ph-cloud-drizzle", color: "text-blue-400" },
+                55: { desc: "Dense drizzle", icon: "ph-cloud-drizzle", color: "text-blue-500" },
+                61: { desc: "Slight rain", icon: "ph-cloud-rain", color: "text-blue-500" },
+                63: { desc: "Moderate rain", icon: "ph-cloud-rain", color: "text-blue-600" },
+                65: { desc: "Heavy rain", icon: "ph-cloud-rain", color: "text-blue-700" },
+                71: { desc: "Slight snow", icon: "ph-snowflake", color: "text-cyan-300" },
+                73: { desc: "Moderate snow", icon: "ph-snowflake", color: "text-cyan-400" },
+                75: { desc: "Heavy snow", icon: "ph-snowflake", color: "text-cyan-500" },
+                80: { desc: "Rain showers", icon: "ph-cloud-rain", color: "text-blue-400" },
+                81: { desc: "Mod. rain showers", icon: "ph-cloud-rain", color: "text-blue-600" },
+                82: { desc: "Violent showers", icon: "ph-cloud-rain", color: "text-blue-800" },
+                95: { desc: "Thunderstorm", icon: "ph-lightning", color: "text-yellow-600" },
+                96: { desc: "Thunderstorm & hail", icon: "ph-lightning", color: "text-yellow-700" },
+                99: { desc: "Heavy Thunderstorm", icon: "ph-lightning", color: "text-red-600" }
+            };
+            return map[code] || { desc: "Unknown", icon: "ph-question", color: "text-gray-400" };
+        }
+
+        // --- Core Functions ---
+
+        function init() {
+            // Set date
+            const now = new Date();
+            document.getElementById('current-date').textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            
+            renderFavorites();
+            
+            // If we have no data, try to locate
+            // Or if we have data from a previous session (optional complexity), 
+            // for now just default init
+            getLocation();
+        }
+
+        // --- Search Logic ---
+        async function handleSearch(e) {
+            e.preventDefault();
+            const query = document.getElementById('search-input').value.trim();
+            if (!query) return;
+
+            setLoading(true);
+            try {
+                // Open-Meteo Geocoding API
+                const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=en&format=json`);
+                const data = await res.json();
+
+                if (!data.results || data.results.length === 0) {
+                    throw new Error("City not found");
+                }
+
+                const result = data.results[0];
+                currentLat = result.latitude;
+                currentLon = result.longitude;
+                userLocationName = `${result.name}, ${result.country || ''}`;
+                
+                document.getElementById('search-input').value = ''; // Clear input
+                fetchWeatherData();
+
+            } catch (err) {
+                showError("Could not find that city. Please try again.");
+                setLoading(false);
+            }
+        }
+
+        // --- Location Logic ---
+        function getLocation() {
+            setLoading(true);
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    async (position) => {
+                        currentLat = position.coords.latitude;
+                        currentLon = position.coords.longitude;
+                        
+                        // Reverse Geocode to get name
+                        try {
+                            const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${currentLat}&longitude=${currentLon}&localityLanguage=en`);
+                            const data = await res.json();
+                            // Construct readable name
+                            userLocationName = data.city || data.locality || "Current Location";
+                            if (data.countryName) userLocationName += `, ${data.countryName}`;
+                        } catch (e) {
+                            userLocationName = "Current Location";
+                        }
+
+                        fetchWeatherData();
+                    },
+                    (error) => {
+                        console.warn("Geolocation denied or error. Using default.");
+                        // Fallback silently if user denies, or show small toast (omitted for simplicity)
+                        fetchWeatherData(); 
+                    }
+                );
+            } else {
+                fetchWeatherData();
+            }
+        }
+
+        // --- Data Fetching ---
+        async function fetchWeatherData() {
+            setLoading(true);
+            document.getElementById('weather-content').classList.remove('opacity-100');
+
+            try {
+                const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${currentLat}&longitude=${currentLon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto`;
+                const aqiUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${currentLat}&longitude=${currentLon}&current=us_aqi&timezone=auto`;
+
+                const [weatherRes, aqiRes] = await Promise.all([
+                    fetch(weatherUrl),
+                    fetch(aqiUrl)
+                ]);
+
+                if (!weatherRes.ok || !aqiRes.ok) throw new Error("Failed to fetch data");
+
+                const weatherData = await weatherRes.json();
+                const aqiData = await aqiRes.json();
+
+                updateUI(weatherData, aqiData);
+                document.getElementById('error-message').classList.add('hidden');
+
+            } catch (err) {
+                console.error(err);
+                showError("Unable to retrieve weather data.");
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function updateUI(weather, aqi) {
+            const current = weather.current;
+            const daily = weather.daily;
+            const usAqi = aqi.current.us_aqi;
+
+            // --- Current Weather ---
+            const weatherInfo = getWeatherDetails(current.weather_code);
+            
+            document.getElementById('location-name').textContent = userLocationName;
+            
+            // Check if current location is favorite
+            updateStarButton();
+
+            // Temp
+            document.getElementById('current-temp').textContent = Math.round(current.temperature_2m) + weather.current_units.temperature_2m;
+            document.getElementById('current-desc').textContent = weatherInfo.desc;
+            
+            // Icons
+            document.getElementById('current-icon').className = `ph-fill ${weatherInfo.icon} ${weatherInfo.color} text-6xl md:text-8xl mr-4`;
+            document.getElementById('bg-icon').className = `ph-fill ${weatherInfo.icon} text-9xl`;
+
+            // Stats
+            document.getElementById('current-humidity').textContent = current.relative_humidity_2m + "%";
+            document.getElementById('current-wind').textContent = current.wind_speed_10m;
+            document.getElementById('current-rain-prob').textContent = daily.precipitation_probability_max[0];
+
+            // AQI
+            const aqiEl = document.getElementById('aqi-badge');
+            const aqiVal = document.getElementById('aqi-val');
+            aqiEl.className = 'px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider inline-block'; // Reset
+            aqiVal.textContent = usAqi;
+
+            if (usAqi <= 50) aqiEl.classList.add('aqi-good');
+            else if (usAqi <= 100) aqiEl.classList.add('aqi-fair');
+            else aqiEl.classList.add('aqi-poor');
+
+            // --- 7-Day Forecast ---
+            const forecastContainer = document.getElementById('forecast-container');
+            forecastContainer.innerHTML = ''; 
+
+            for (let i = 0; i < 7; i++) {
+                const dateRaw = new Date(daily.time[i]);
+                const dayName = i === 0 ? "Today" : dateRaw.toLocaleDateString('en-US', { weekday: 'short' });
+                const maxTemp = Math.round(daily.temperature_2m_max[i]);
+                const minTemp = Math.round(daily.temperature_2m_min[i]);
+                const precipProb = daily.precipitation_probability_max[i];
+                const code = daily.weather_code[i];
+                const dayInfo = getWeatherDetails(code);
+
+                const card = document.createElement('div');
+                card.className = "weather-card bg-white rounded-xl p-4 shadow-sm flex flex-col items-center justify-between min-h-[160px] border border-transparent hover:border-blue-200 transition-colors";
+                card.innerHTML = `
+                    <span class="text-sm font-semibold text-gray-500">${dayName}</span>
+                    <i class="ph-fill ${dayInfo.icon} ${dayInfo.color} text-4xl weather-icon-anim my-2"></i>
+                    <div class="flex flex-col items-center w-full">
+                        <div class="flex gap-2 text-sm font-bold text-gray-800">
+                            <span>${maxTemp}°</span>
+                            <span class="text-gray-400">${minTemp}°</span>
+                        </div>
+                        ${precipProb > 0 ? `<div class="flex items-center gap-1 mt-2 text-xs text-blue-500 font-medium bg-blue-50 px-2 py-1 rounded-full"><i class="ph-bold ph-drop"></i><span>${precipProb}%</span></div>` : `<div class="mt-2 h-6"></div>`}
+                    </div>
+                `;
+                forecastContainer.appendChild(card);
+            }
+
+            document.getElementById('weather-content').classList.add('opacity-100');
+        }
+
+        // --- Favorites Logic ---
+        function toggleFavorite() {
+            const index = favorites.findIndex(f => f.name === userLocationName);
+            
+            if (index === -1) {
+                // Add
+                favorites.push({ name: userLocationName, lat: currentLat, lon: currentLon });
+            } else {
+                // Remove
+                favorites.splice(index, 1);
+            }
+            
+            localStorage.setItem('cs_favorites', JSON.stringify(favorites));
+            updateStarButton();
+            renderFavorites();
+        }
+
+        function updateStarButton() {
+            const isFav = favorites.some(f => f.name === userLocationName);
+            const icon = document.getElementById('star-icon');
+            
+            if (isFav) {
+                icon.classList.remove('ph-bold');
+                icon.classList.add('ph-fill');
+            } else {
+                icon.classList.remove('ph-fill');
+                icon.classList.add('ph-bold');
+            }
+        }
+
+        function loadFavorite(lat, lon, name) {
+            currentLat = lat;
+            currentLon = lon;
+            userLocationName = name;
+            fetchWeatherData();
+        }
+
+        function renderFavorites() {
+            const container = document.getElementById('favorites-list');
+            const section = document.getElementById('favorites-section');
+            
+            container.innerHTML = '';
+            
+            if (favorites.length === 0) {
+                section.classList.add('hidden');
+                return;
+            }
+            
+            section.classList.remove('hidden');
+
+            favorites.forEach(fav => {
+                const btn = document.createElement('button');
+                btn.className = "fav-chip flex items-center gap-2 px-4 py-2 bg-white rounded-full text-sm font-medium text-gray-700 shadow-sm border border-gray-100 hover:text-blue-600 whitespace-nowrap";
+                btn.onclick = () => loadFavorite(fav.lat, fav.lon, fav.name);
+                
+                btn.innerHTML = `
+                    <span>${fav.name}</span>
+                `;
+                container.appendChild(btn);
+            });
+        }
+
+        // --- Utils ---
+        function setLoading(isLoading) {
+            const loader = document.getElementById('loading');
+            const content = document.getElementById('weather-content');
+            
+            if (isLoading) {
+                loader.classList.remove('hidden');
+                content.classList.add('hidden');
+            } else {
+                loader.classList.add('hidden');
+                content.classList.remove('hidden');
+            }
+        }
+
+        function showError(msg) {
+            const errEl = document.getElementById('error-message');
+            document.getElementById('error-text').textContent = msg;
+            errEl.classList.remove('hidden');
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
