@@ -133,12 +133,3 @@ This lab assignment successfully implements a functional, API-driven web applica
 ```
 
 ---
-
-If you want, I can:
-- Align this **exactly to your college lab rubric**
-- Shorten it to **fit page limits**
-- Convert it to **PDF / DOCX**
-- Rewrite it in a **more “examiner-friendly” tone**
-
-Just say the word.
-```
